@@ -7,6 +7,7 @@ import sqlite3
 import json
 import os
 import hashlib
+import secrets
 from contextlib import contextmanager
 from app.config import DB_PATH
 
@@ -99,6 +100,12 @@ def init_db() -> None:
                 notion_url  TEXT NOT NULL,
                 synced_at   TEXT DEFAULT (datetime('now')),
                 PRIMARY KEY (entity_type, entity_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS sessions (
+                token       TEXT PRIMARY KEY,
+                username    TEXT NOT NULL,
+                created_at  TEXT DEFAULT (datetime('now'))
             );
         """)
 
@@ -392,4 +399,35 @@ def get_notion_url(entity_type: str, entity_id: str) -> str | None:
             (entity_type, entity_id),
         ).fetchone()
     return row["notion_url"] if row else None
+
+
+# ─── Sessions (persistent login) ─────────────────────────────────────────────
+
+def create_session(username: str) -> str:
+    """Generate a secure random token, persist it, and return it."""
+    token = secrets.token_urlsafe(32)
+    with get_db() as conn:
+        # Clean up old sessions for this user first (keep only one)
+        conn.execute("DELETE FROM sessions WHERE username = ?", (username,))
+        conn.execute(
+            "INSERT INTO sessions (token, username) VALUES (?, ?)",
+            (token, username),
+        )
+    return token
+
+
+def validate_session(token: str) -> str | None:
+    """Return the username if token is valid, else None."""
+    if not token:
+        return None
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT username FROM sessions WHERE token = ?", (token,)
+        ).fetchone()
+    return row["username"] if row else None
+
+
+def delete_session(token: str) -> None:
+    with get_db() as conn:
+        conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
 

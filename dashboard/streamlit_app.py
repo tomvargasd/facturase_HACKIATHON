@@ -33,8 +33,9 @@ from app.database import (
     actualizar_estado_cola,
     eliminar_de_cola,
     limpiar_cola_completados,
-    get_tour_completado,
-    set_tour_completado,
+    create_session,
+    validate_session,
+    delete_session,
 )
 from app.orquestador import auditar_factura
 from data.demo_data import FACTURAS_DEMO, DEMO_SINIESTRO_MAP
@@ -54,171 +55,6 @@ from app.database import get_notion_url, guardar_notion_url
 
 import dashboard.styles
 from dashboard.login import gen_captcha, login
-
-# ─── Tour steps ───────────────────────────────────────────────────────────────
-
-TOUR_STEPS = [
-    {
-        "title": "Bienvenido a Facturase",
-        "desc": "Este tour rápido te mostrará las principales secciones de la app. Puedes omitirlo y volver a verlo cuando quieras desde el sidebar.",
-        "target": "sidebar",
-    },
-    {
-        "title": "Sidebar de navegación",
-        "desc": "Desde aquí puedes moverte entre todos los módulos: Dashboard, Auditar, Cola, Historial, Siniestros, Tarifario y Notion Sync.",
-        "target": "sidebar",
-    },
-    {
-        "title": "Dashboard — Métricas",
-        "desc": "La pantalla principal muestra tus indicadores clave: total auditado, aprobaciones, rechazos, ahorro detectado y gráficos de distribución.",
-        "target": "main",
-    },
-    {
-        "title": "Acciones rápidas",
-        "desc": "Tres atajos directos para las operaciones más frecuentes: crear una nueva auditoría, agregar a la cola de procesamiento o registrar un nuevo siniestro.",
-        "target": "main",
-    },
-    {
-        "title": "Auditar Factura",
-        "desc": "Sube un PDF de factura o usa una factura demo. Selecciona el expediente del siniestro y ejecuta el análisis con IA en segundos.",
-        "target": "main",
-    },
-    {
-        "title": "Cola de revisión",
-        "desc": "Acumula múltiples casos y procésalos todos de una vez con el botón 'Procesar todos los pendientes'. Ideal para auditorías en lote.",
-        "target": "main",
-    },
-    {
-        "title": "Historial",
-        "desc": "Consulta todas las auditorías pasadas, revisa sus dictámenes detallados y ábrelos directamente en Notion si está configurado.",
-        "target": "main",
-    },
-    {
-        "title": "Siniestros y Tarifario",
-        "desc": "Gestiona los expedientes de siniestros y administra la base de precios de referencia que usa la IA para detectar discrepancias.",
-        "target": "main",
-    },
-    {
-        "title": "Notion Sync",
-        "desc": "Conecta tu cuenta de Notion para sincronizar todos tus datos automáticamente. Los datos en Notion son de solo lectura visual.",
-        "target": "main",
-    },
-    {
-        "title": "¡Todo listo!",
-        "desc": "Ya conoces Facturase. Puedes volver a ver este tour en cualquier momento desde el botón 'Tour de la aplicación' en el sidebar.",
-        "target": "main",
-    },
-]
-
-
-def render_tour() -> None:
-    """Full-page spotlight tour overlay. Buttons wired via addEventListener (no onclick= attrs)."""
-    step = st.session_state.get("tour_step", 0)
-    total = len(TOUR_STEPS)
-    if step >= total:
-        st.session_state.tour_activo = False
-        return
-
-    info = TOUR_STEPS[step]
-    is_last = step == total - 1
-
-    # Spotlight region: sidebar steps highlight left panel, main steps highlight right panel
-    if info["target"] == "sidebar":
-        spot = "left:0;top:0;width:264px;height:100vh;border-radius:0 8px 8px 0;"
-        card = "left:284px;top:50%;transform:translateY(-50%);"
-    else:
-        spot = "left:264px;top:60px;right:0;bottom:0;border-radius:8px 0 0 8px;"
-        card = "left:calc(264px + ((100vw - 264px) / 2));top:45%;transform:translate(-50%,-50%);"
-
-    def _dot(i: int) -> str:
-        bg = "#3b82f6" if i == step else "#e2e8f0"
-        return (
-            f'<span style="width:8px;height:8px;border-radius:50%;display:inline-block;'
-            f'margin:0 2px;background:{bg};transition:background 0.25s"></span>'
-        )
-    dots = "".join(_dot(i) for i in range(total))
-    prev_dis = "disabled" if step == 0 else ""
-    next_txt  = "\u2713 Finalizar tour" if is_last else "Siguiente \u2192"
-
-    st.markdown(f"""
-<style>
-#ftour-ov  {{ position:fixed;inset:0;z-index:9998;pointer-events:all; }}
-#ftour-sp  {{ position:fixed;z-index:9999;border-radius:8px;
-              box-shadow:0 0 0 4px rgba(59,130,246,.9),0 0 0 9999px rgba(0,0,0,.62);
-              pointer-events:none;transition:all .3s ease; }}
-#ftour-cd  {{ position:fixed;z-index:10000;background:#fff;border-radius:16px;
-              box-shadow:0 8px 40px rgba(0,0,0,.22);padding:1.4rem 1.6rem 1.2rem;
-              width:340px;max-width:90vw; }}
-.ft-prev   {{ background:#f1f5f9;border:none;color:#374151;border-radius:8px;
-              padding:.5rem 1rem;font-size:.84rem;font-weight:500;cursor:pointer; }}
-.ft-prev:disabled {{ opacity:.38;cursor:not-allowed; }}
-.ft-next   {{ background:#2563eb;border:none;color:#fff;border-radius:8px;
-              padding:.5rem 1.2rem;font-size:.84rem;font-weight:700;cursor:pointer; }}
-.ft-skip   {{ background:none;border:none;color:#9ca3af;font-size:.78rem;
-              cursor:pointer;text-decoration:underline;padding:.5rem; }}
-</style>
-<div id="ftour-ov">
-  <div id="ftour-sp" style="{spot}"></div>
-  <div id="ftour-cd" style="{card}">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.65rem">
-      <span style="font-size:.68rem;font-weight:700;letter-spacing:.1em;color:#6b7280">PASO {step+1} DE {total}</span>
-      <div>{dots}</div>
-    </div>
-    <div style="font-size:1.05rem;font-weight:700;color:#0f172a;margin-bottom:.35rem">{info['title']}</div>
-    <div style="font-size:.87rem;color:#4b5563;line-height:1.6;margin-bottom:1.1rem">{info['desc']}</div>
-    <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
-      <button class="ft-prev" id="ftour-prev" {prev_dis}>\u2190 Anterior</button>
-      <button class="ft-next" id="ftour-next">{next_txt}</button>
-      <button class="ft-skip" id="ftour-skip">Omitir tour</button>
-    </div>
-  </div>
-</div>
-<script>
-(function(){{
-  var t=0;
-  function bind(){{
-    var p=document.getElementById('ftour-prev');
-    var n=document.getElementById('ftour-next');
-    var s=document.getElementById('ftour-skip');
-    if(!p||!n||!s){{ if(++t<40) setTimeout(bind,100); return; }}
-    function hit(txt){{
-      var all=document.querySelectorAll('button');
-      for(var i=0;i<all.length;i++){{
-        if(all[i].textContent.trim()===txt){{ all[i].click(); return; }}
-      }}
-    }}
-    p.addEventListener('click',function(e){{ e.preventDefault(); hit('\u00abprev\u00bb'); }});
-    n.addEventListener('click',function(e){{ e.preventDefault(); hit('\u00abnext\u00bb'); }});
-    s.addEventListener('click',function(e){{ e.preventDefault(); hit('\u00abskip\u00bb'); }});
-  }}
-  bind();
-}})();
-</script>
-""", unsafe_allow_html=True)
-
-    # Hidden control buttons (visually covered by overlay; reachable only via JS .click())
-    _tc1, _tc2, _tc3 = st.columns([1, 1, 1])
-    with _tc1:
-        if st.button("\u00abprev\u00bb", key="tc_prev"):
-            if step > 0:
-                st.session_state.tour_step -= 1
-            st.rerun()
-    with _tc2:
-        if st.button("\u00abnext\u00bb", key="tc_next"):
-            if step < total - 1:
-                st.session_state.tour_step += 1
-            else:
-                st.session_state.tour_activo = False
-                if st.session_state.get("username"):
-                    set_tour_completado(st.session_state.username, True)
-            st.rerun()
-    with _tc3:
-        if st.button("\u00abskip\u00bb", key="tc_skip"):
-            st.session_state.tour_activo = False
-            if st.session_state.get("username"):
-                set_tour_completado(st.session_state.username, True)
-            st.rerun()
-    st.stop()
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -275,30 +111,33 @@ NAV_ITEMS = [
 
 # ─── Captcha ──────────────────────────────────────────────────────────────────
 
-generar_captcha = gen_captcha 
+generar_captcha = gen_captcha
 
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.username = ""
 if "captcha" not in st.session_state:
     st.session_state.captcha = generar_captcha()
-if "tour_activo" not in st.session_state:
-    st.session_state.tour_activo = False
-if "tour_step" not in st.session_state:
-    st.session_state.tour_step = 0
-if "tour_checked" not in st.session_state:
-    st.session_state.tour_checked = False
 
-# ─── Login.  ──────────────────────────────────────────────────────────────────
+# ─── Session token persistence (restore login after page reload) ──────────────
+_token = st.query_params.get("s", "")
+if not st.session_state.logged_in and _token:
+    _user = validate_session(_token)
+    if _user:
+        st.session_state.logged_in = True
+        st.session_state.username = _user
+        st.session_state["_stoken"] = _token
+
+# ─── Login ──────────────────────────────────────────────────────────────────────
 
 login(st, verificar_usuario, listar_usuarios_count, LOGO_SVG)
 
-# Auto-trigger tour on first login (check once per session after login)
-if st.session_state.logged_in and not st.session_state.tour_checked:
-    st.session_state.tour_checked = True
-    if not get_tour_completado(st.session_state.username):
-        st.session_state.tour_activo = True
-        st.session_state.tour_step = 0
+# After successful login, issue a session token and put it in URL
+if st.session_state.logged_in and not st.session_state.get("_stoken"):
+    _new_token = create_session(st.session_state.username)
+    st.session_state["_stoken"] = _new_token
+    st.query_params["s"] = _new_token
+    st.rerun()
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN APP
@@ -314,7 +153,11 @@ if "mostrar_equipo" not in st.session_state:
 _nav_qp = st.query_params.get("nav", "")
 if _nav_qp and _nav_qp in {k for k, _, _ in NAV_ITEMS}:
     st.session_state.pagina = _nav_qp
+    # Keep the session token when clearing nav param
+    _cur_tok = st.session_state.get("_stoken", "")
     st.query_params.clear()
+    if _cur_tok:
+        st.query_params["s"] = _cur_tok
     st.rerun()
 
 # ─── Sidebar ──────────────────────────────────────────────────────────────────
@@ -335,10 +178,12 @@ with st.sidebar:
     st.markdown('<div style="padding:0.6rem 1.4rem 0.2rem 1.4rem;font-size:0.62rem;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:#1e3550">Modulos</div>', unsafe_allow_html=True)
     
     _nav_html = '<div class="navmenu">'
+    _tok = st.session_state.get("_stoken", "")
     for key, label, icon_svg in NAV_ITEMS:
         _active_cls = " nav-active" if st.session_state.pagina == key else ""
+        _href = f"?nav={key}&s={_tok}" if _tok else f"?nav={key}"
         _nav_html += (
-            f'<a href="?nav={key}" class="nav-item-link{_active_cls}">'
+            f'<a href="{_href}" class="nav-item-link{_active_cls}">'
             f'{icon_svg}<span>{label}</span></a>'
         )
     _nav_html += '</div>'
@@ -354,13 +199,6 @@ with st.sidebar:
         st.markdown('<div style="font-size:0.7rem;color:#d97706;padding:0 1.4rem 0.2rem 1.4rem">Datos de demo activos</div>', unsafe_allow_html=True)
 
     st.markdown('<hr style="border:none;border-top:1px solid #0f1e30;margin:0.5rem 0">', unsafe_allow_html=True)
-
-    st.markdown('<div class="tourbtn">', unsafe_allow_html=True)
-    if st.button("Tour de la aplicación", key="nav_tour", use_container_width=True):
-        st.session_state.tour_activo = True
-        st.session_state.tour_step = 0
-        st.rerun()
-    st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="equipobtn">', unsafe_allow_html=True)
     if st.button("Acerca del equipo", key="nav_equipo", use_container_width=True):
@@ -393,13 +231,14 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
     if st.button("Cerrar sesion", key="logout", use_container_width=True):
+        _tok = st.session_state.get("_stoken", "")
+        if _tok:
+            delete_session(_tok)
         st.session_state.logged_in = False
         st.session_state.username = ""
+        st.session_state["_stoken"] = ""
+        st.query_params.clear()
         st.rerun()
-
-# ─── Tour overlay (after sidebar so sidebar renders behind spotlight) ─────────
-if st.session_state.get("tour_activo"):
-    render_tour()  # calls st.stop() — nothing below runs while tour is active
 
 # ─── Modal equipo ─────────────────────────────────────────────────────────────
 
