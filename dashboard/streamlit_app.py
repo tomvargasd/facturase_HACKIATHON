@@ -36,6 +36,18 @@ from app.database import (
 )
 from app.orquestador import auditar_factura
 from data.demo_data import FACTURAS_DEMO, DEMO_SINIESTRO_MAP
+from app.notion_sync import (
+    NOTION_AVAILABLE,
+    is_notion_configured,
+    configurar_notion,
+    desconectar_notion,
+    sincronizar_auditoria,
+    sincronizar_todas_auditorias,
+    sincronizar_todos_siniestros,
+    sincronizar_tarifario_items,
+    get_notion_db_urls,
+)
+from app.database import get_notion_url, guardar_notion_url
 
 import dashboard.styles
 from dashboard.login import gen_captcha, login
@@ -80,6 +92,7 @@ ICON = {
     "historial":  '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="#fff" stroke="#1856b4" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
     "siniestros": '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="#fff" stroke="#1856b4" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>',
     "tarifario":  '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="#fff" stroke="#1856b4" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>',
+    "notion":     '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="#fff"><path d="M4.459 4.208c.746.606 1.026.56 2.428.466l13.215-.793c.28 0 .047-.28-.046-.326L17.86 1.968c-.42-.326-.981-.7-2.055-.607L3.01 2.295c-.466.046-.56.28-.374.466zm.793 3.08v13.906c0 .747.373 1.027 1.214.98l14.523-.84c.841-.046.935-.56.935-1.167V6.354c0-.606-.233-.933-.748-.887l-15.177.887c-.56.047-.747.327-.747.933zm14.337.745c.093.42 0 .84-.42.888l-.7.14v10.264c-.608.327-1.168.514-1.635.514-.748 0-.935-.234-1.495-.933l-4.577-7.186v6.952L12.21 19s0 .84-1.168.84l-3.222.186c-.093-.186 0-.653.327-.746l.84-.233V9.854L7.822 9.76c-.094-.42.14-1.026.793-1.073l3.456-.233 4.764 7.279v-6.44l-1.215-.139c-.093-.514.28-.887.747-.933zM1.936 1.035l13.31-.98c1.634-.14 2.055-.047 3.082.7l4.249 2.986c.7.513.934.653.934 1.213v16.378c0 1.026-.373 1.634-1.68 1.726l-15.458.934c-.98.047-1.448-.093-1.962-.747l-3.129-4.06c-.56-.747-.793-1.306-.793-1.96V2.667c0-.839.374-1.54 1.447-1.632z"/></svg>',
 }
 
 NAV_ITEMS = [
@@ -89,6 +102,7 @@ NAV_ITEMS = [
     ("historial",  "Historial"),
     ("siniestros", "Siniestros"),
     ("tarifario",  "Tarifario"),
+    ("notion",     "Notion Sync"),
 ]
 
 # ─── Captcha ──────────────────────────────────────────────────────────────────
@@ -319,6 +333,36 @@ def render_dictamen(dictamen: dict) -> None:
     with st.expander("JSON completo del dictamen"):
         st.json(dictamen)
 
+    # ─── Abrir en Notion ─────────────────────────────────────────────────────
+    audit_id = dictamen.get("id")
+    notion_url = get_notion_url("auditoria", str(audit_id)) if audit_id else None
+
+    if is_notion_configured():
+        nc1, nc2 = st.columns([1, 3])
+        with nc1:
+            if notion_url:
+                st.markdown(
+                    f'<a href="{notion_url}" target="_blank" style="display:inline-flex;'
+                    'align-items:center;gap:0.4rem;background:#000;color:#fff;padding:0.45rem 1rem;'
+                    'border-radius:8px;font-size:0.82rem;font-weight:600;text-decoration:none">'
+                    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="#fff">'
+                    '<path d="M4.459 4.208c.746.606 1.026.56 2.428.466l13.215-.793c.28 0 .047-.28-.046-.326L17.86 1.968c-.42-.326-.981-.7-2.055-.607L3.01 2.295c-.466.046-.56.28-.374.466zm.793 3.08v13.906c0 .747.373 1.027 1.214.98l14.523-.84c.841-.046.935-.56.935-1.167V6.354c0-.606-.233-.933-.748-.887l-15.177.887c-.56.047-.747.327-.747.933zm14.337.745c.093.42 0 .84-.42.888l-.7.14v10.264c-.608.327-1.168.514-1.635.514-.748 0-.935-.234-1.495-.933l-4.577-7.186v6.952L12.21 19s0 .84-1.168.84l-3.222.186c-.093-.186 0-.653.327-.746l.84-.233V9.854L7.822 9.76c-.094-.42.14-1.026.793-1.073l3.456-.233 4.764 7.279v-6.44l-1.215-.139c-.093-.514.28-.887.747-.933z"/></svg>'
+                    ' Abrir en Notion</a>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                if st.button("Subir a Notion", key=f"notion_upload_{audit_id or 'last'}"):
+                    with st.spinner("Sincronizando con Notion..."):
+                        try:
+                            url = sincronizar_auditoria(dictamen, audit_db_id=audit_id)
+                            if url:
+                                st.success("Sincronizado.")
+                                st.rerun()
+                            else:
+                                st.error("No se pudo sincronizar. Verifica la configuracion de Notion.")
+                        except Exception as exc:
+                            st.error(f"Error: {exc}")
+
 # ══════════════════════════════════════════════════════════════════════════════
 # PAGINAS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -491,6 +535,17 @@ elif pagina == "auditar":
                     try:
                         dictamen = auditar_factura(siniestro, pdf_bytes=pdf_bytes, factura_json=factura_json)
                         st.session_state["ultimo_dictamen"] = dictamen
+                        # Auto-sync to Notion if configured
+                        if is_notion_configured():
+                            try:
+                                notion_url = sincronizar_auditoria(
+                                    dictamen,
+                                    audit_db_id=dictamen.get("id"),
+                                )
+                                if notion_url:
+                                    st.session_state["ultimo_dictamen_notion_url"] = notion_url
+                            except Exception:
+                                pass  # Notion sync failure is non-blocking
                     except Exception as e:
                         st.error(f"Error durante la auditoria: {e}")
                         st.exception(e)
@@ -806,3 +861,168 @@ elif pagina == "tarifario":
                 eliminar_item_tarifario(cod_del)
                 st.success(f"Item {cod_del} eliminado.")
                 st.rerun()
+
+# ─── Notion Sync ──────────────────────────────────────────────────────────────
+elif pagina == "notion":
+    page_header("Notion Sync", "Sincroniza tus datos con Notion (solo lectura visual)", "notion")
+
+    if not NOTION_AVAILABLE:
+        st.error(
+            "La librería **notion-client** no está instalada. "
+            "Ejecuta `pip install notion-client` y reinicia la app."
+        )
+        st.stop()
+
+    configured = is_notion_configured()
+
+    # ── Sin conexión: setup flow ──────────────────────────────────────────────
+    if not configured:
+        st.markdown("""
+        <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:12px;
+                    padding:1.4rem 1.6rem;margin-bottom:1.2rem">
+            <div style="font-size:1rem;font-weight:700;color:#0c4a6e;margin-bottom:0.4rem">
+                Conectar con Notion
+            </div>
+            <p style="font-size:0.85rem;color:#0369a1;margin:0">
+                Facturase creará automáticamente tres bases de datos en la página de Notion
+                que elijas: <strong>Auditorias</strong>, <strong>Siniestros</strong> y
+                <strong>Tarifario</strong>. Los datos se sincronizan desde la app; la vista
+                en Notion es de solo lectura.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("#### Pasos para conectar")
+        st.markdown("""
+        1. Abre [notion.so/my-integrations](https://www.notion.so/my-integrations) y crea una integración (tipo **Internal**).  
+           Copia el **Token** (empieza con `secret_...`).
+        2. En Notion, abre la página donde quieres crear las bases de datos.  
+           Haz clic en **···** → **Add connections** → selecciona tu integración.
+        3. Copia el **ID de la página** desde la URL:  
+           `notion.so/Mi-pagina-`**`xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`**`?v=...`  
+           (son 32 caracteres hexadecimales, pueden tener guiones).
+        4. Pega los datos abajo y haz clic en **Conectar y crear bases de datos**.
+        """)
+
+        with st.form("form_notion_setup"):
+            notion_token = st.text_input(
+                "Token de integración *",
+                type="password",
+                placeholder="secret_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            )
+            parent_page_id = st.text_input(
+                "ID de la página padre *",
+                placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            )
+            submitted = st.form_submit_button(
+                "Conectar y crear bases de datos", type="primary", use_container_width=True
+            )
+            if submitted:
+                if not notion_token.strip() or not parent_page_id.strip():
+                    st.error("Ambos campos son obligatorios.")
+                else:
+                    with st.spinner("Creando bases de datos en Notion..."):
+                        result = configurar_notion(
+                            notion_token.strip(),
+                            parent_page_id.strip().replace("-", ""),
+                        )
+                    if result["ok"]:
+                        st.success("¡Conexión establecida! Las bases de datos fueron creadas en Notion.")
+                        st.balloons()
+                        st.rerun()
+                    else:
+                        st.error(f"Error al conectar: {result['error']}")
+
+    # ── Con conexión: panel de sincronización ─────────────────────────────────
+    else:
+        db_urls = get_notion_db_urls()
+
+        st.markdown("""
+        <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;
+                    padding:1rem 1.4rem;margin-bottom:1.2rem;display:flex;align-items:center;gap:0.6rem">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="#16a34a">
+                <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+            </svg>
+            <span style="font-size:0.9rem;font-weight:600;color:#15803d">Notion conectado y activo</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # DB links
+        link_cols = st.columns(3)
+        for col, (label, url_key) in zip(
+            link_cols,
+            [("Auditorias", "auditorias"), ("Siniestros", "siniestros"), ("Tarifario", "tarifario")],
+        ):
+            url = db_urls.get(url_key, "")
+            with col:
+                if url:
+                    st.markdown(
+                        f'<a href="{url}" target="_blank" style="display:flex;align-items:center;'
+                        'gap:0.4rem;background:#000;color:#fff;padding:0.5rem 0.8rem;'
+                        'border-radius:8px;font-size:0.8rem;font-weight:600;text-decoration:none;'
+                        'justify-content:center">'
+                        '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="#fff">'
+                        '<path d="M4.459 4.208c.746.606 1.026.56 2.428.466l13.215-.793c.28 0 .047-.28-.046-.326L17.86 1.968c-.42-.326-.981-.7-2.055-.607L3.01 2.295c-.466.046-.56.28-.374.466zm.793 3.08v13.906c0 .747.373 1.027 1.214.98l14.523-.84c.841-.046.935-.56.935-1.167V6.354c0-.606-.233-.933-.748-.887l-15.177.887c-.56.047-.747.327-.747.933zm14.337.745c.093.42 0 .84-.42.888l-.7.14v10.264c-.608.327-1.168.514-1.635.514-.748 0-.935-.234-1.495-.933l-4.577-7.186v6.952L12.21 19s0 .84-1.168.84l-3.222.186c-.093-.186 0-.653.327-.746l.84-.233V9.854L7.822 9.76c-.094-.42.14-1.026.793-1.073l3.456-.233 4.764 7.279v-6.44l-1.215-.139c-.093-.514.28-.887.747-.933z"/></svg>'
+                        f' Ver {label} en Notion</a>',
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.markdown(f'<div style="color:#94a3b8;font-size:0.8rem">{label}: sin URL</div>', unsafe_allow_html=True)
+
+        st.divider()
+        st.markdown("#### Sincronización manual")
+        st.info(
+            "Las auditorias se sincronizan automáticamente al ejecutar un análisis. "
+            "Usa los botones de abajo para sincronizar datos históricos o hacer una "
+            "sincronización completa."
+        )
+
+        sc1, sc2, sc3 = st.columns(3)
+
+        with sc1:
+            st.markdown("**Auditorias**")
+            if st.button("Sincronizar todas las auditorias", use_container_width=True):
+                auditorias = listar_auditorias(500)
+                if not auditorias:
+                    st.warning("No hay auditorias para sincronizar.")
+                else:
+                    with st.spinner(f"Sincronizando {len(auditorias)} auditorias..."):
+                        res = sincronizar_todas_auditorias(auditorias)
+                    st.success(f"Listo: {res['ok']} sincronizadas, {res['errores']} errores.")
+
+        with sc2:
+            st.markdown("**Siniestros**")
+            if st.button("Sincronizar todos los siniestros", use_container_width=True):
+                siniestros_all = listar_siniestros()
+                if not siniestros_all:
+                    st.warning("No hay siniestros para sincronizar.")
+                else:
+                    with st.spinner(f"Sincronizando {len(siniestros_all)} siniestros..."):
+                        res = sincronizar_todos_siniestros(siniestros_all)
+                    st.success(f"Listo: {res['ok']} sincronizados, {res['errores']} errores.")
+
+        with sc3:
+            st.markdown("**Tarifario**")
+            if st.button("Sincronizar tarifario completo", use_container_width=True):
+                items_all = listar_tarifario()
+                if not items_all:
+                    st.warning("El tarifario está vacío.")
+                else:
+                    with st.spinner(f"Sincronizando {len(items_all)} items..."):
+                        res = sincronizar_tarifario_items(items_all)
+                    if "error" in res:
+                        st.error(res["error"])
+                    else:
+                        st.success(f"Listo: {res['ok']} sincronizados, {res['errores']} errores.")
+
+        st.divider()
+        st.markdown("#### Desconectar Notion")
+        st.warning(
+            "Esto eliminará la configuración de Notion de esta app. "
+            "Los datos en Notion **no** serán borrados."
+        )
+        if st.button("Desconectar Notion", type="secondary"):
+            desconectar_notion()
+            st.success("Notion desconectado.")
+            st.rerun()
+

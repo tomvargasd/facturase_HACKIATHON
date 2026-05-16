@@ -86,6 +86,19 @@ def init_db() -> None:
                 created_at     TEXT DEFAULT (datetime('now')),
                 procesado_at   TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS notion_config (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS notion_pages (
+                entity_type TEXT NOT NULL,
+                entity_id   TEXT NOT NULL,
+                notion_url  TEXT NOT NULL,
+                synced_at   TEXT DEFAULT (datetime('now')),
+                PRIMARY KEY (entity_type, entity_id)
+            );
         """)
 
 
@@ -311,3 +324,45 @@ def eliminar_de_cola(id: int) -> None:
 def limpiar_cola_completados() -> None:
     with get_db() as conn:
         conn.execute("DELETE FROM cola_pendientes WHERE estado IN ('completado', 'error')")
+
+
+# ─── Notion config y páginas ──────────────────────────────────────────────────
+
+def get_notion_cfg() -> dict:
+    """Return all Notion config key-value pairs."""
+    with get_db() as conn:
+        rows = conn.execute("SELECT key, value FROM notion_config").fetchall()
+    return {r["key"]: r["value"] for r in rows}
+
+
+def save_notion_cfg(key: str, value: str) -> None:
+    with get_db() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO notion_config (key, value) VALUES (?, ?)",
+            (key, value),
+        )
+
+
+def delete_notion_cfg() -> None:
+    """Remove all Notion config (unlink)."""
+    with get_db() as conn:
+        conn.execute("DELETE FROM notion_config")
+        conn.execute("DELETE FROM notion_pages")
+
+
+def guardar_notion_url(entity_type: str, entity_id: str, url: str) -> None:
+    with get_db() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO notion_pages (entity_type, entity_id, notion_url) VALUES (?, ?, ?)",
+            (entity_type, entity_id, url),
+        )
+
+
+def get_notion_url(entity_type: str, entity_id: str) -> str | None:
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT notion_url FROM notion_pages WHERE entity_type=? AND entity_id=?",
+            (entity_type, entity_id),
+        ).fetchone()
+    return row["notion_url"] if row else None
+

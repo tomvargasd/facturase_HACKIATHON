@@ -7,3 +7,4 @@ python-multipart>=0.0.12
 python-dotenv>=1.0.0
 pydantic>=2.9.0
 plotly>=5.24.0
+notion-client>=2.2.0
