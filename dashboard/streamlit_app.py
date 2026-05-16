@@ -110,96 +110,58 @@ TOUR_STEPS = [
 ]
 
 
-def render_tour() -> None:
-    """Render the interactive tour overlay using HTML/CSS/JS."""
+@st.dialog("🗺️ Tour — Facturase", width="large")
+def tour_dialog() -> None:
+    """Guided app tour using Streamlit's native dialog (no JS required)."""
     step = st.session_state.get("tour_step", 0)
     total = len(TOUR_STEPS)
     if step >= total:
+        st.session_state.tour_activo = False
         return
 
     info = TOUR_STEPS[step]
     is_last = step == total - 1
-    dots_html = "".join(
-        f'<div class="tc-dot{"  active" if i == step else ""}"></div>'
+
+    # Progress header
+    dots = "".join(
+        '<span style="color:#2563eb;font-size:11px;margin:0 2px">●</span>' if i == step
+        else '<span style="color:#cbd5e1;font-size:11px;margin:0 2px">●</span>'
         for i in range(total)
     )
+    st.markdown(
+        f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'
+        f'<span style="font-size:0.72rem;font-weight:700;color:#64748b;letter-spacing:.08em">'
+        f'PASO {step + 1} DE {total}</span>'
+        f'<div>{dots}</div></div>',
+        unsafe_allow_html=True,
+    )
 
-    # Spotlight target coordinates (viewport-relative, best-effort for Streamlit)
-    if info["target"] == "sidebar":
-        spot_style = "left:0;top:0;width:260px;height:100vh;border-radius:0;"
-        card_style = "left:280px;top:50%;transform:translateY(-50%);"
-    else:
-        spot_style = "left:260px;top:56px;right:0;bottom:0;border-radius:0;"
-        card_style = "left:50%;top:50%;transform:translate(-50%,-50%);"
+    st.markdown(f"### {info['title']}")
+    st.write(info["desc"])
+    st.divider()
 
-    prev_disabled = "disabled" if step == 0 else ""
-
-    st.markdown(f"""
-    <div id="facturase-tour-overlay" class="active">
-        <div id="facturase-tour-spotlight" style="{spot_style}"></div>
-        <div id="facturase-tour-card" style="{card_style}">
-            <div class="tc-header">
-                <span class="tc-step">Paso {step + 1} de {total}</span>
-                <div class="tc-dots">{dots_html}</div>
-            </div>
-            <div class="tc-title">{info['title']}</div>
-            <div class="tc-desc">{info['desc']}</div>
-            <div class="tc-nav">
-                <button class="tc-btn-prev" id="tc-prev" onclick="window._tcPrev()" {prev_disabled}>← Anterior</button>
-                <button class="tc-btn-next" id="tc-next" onclick="window._tcNext()">
-                    {"Finalizar tour" if is_last else "Siguiente →"}
-                </button>
-                <button class="tc-btn-skip" onclick="window._tcSkip()">Omitir tour</button>
-            </div>
-        </div>
-    </div>
-    <script>
-    (function(){{
-        // Wire buttons to Streamlit hidden button clicks via query param trick
-        function setStep(val) {{
-            window.parent.postMessage({{type:"streamlit:setComponentValue", value: val}}, "*");
-        }}
-        window._tcNext = function() {{
-            var btn = window.parent.document.querySelector('[data-testid="stButton"] button[id^="tc_next"]');
-            if(btn) btn.click();
-        }};
-        window._tcPrev = function() {{
-            var btn = window.parent.document.querySelector('[data-testid="stButton"] button[id^="tc_prev"]');
-            if(btn) btn.click();
-        }};
-        window._tcSkip = function() {{
-            var btn = window.parent.document.querySelector('[data-testid="stButton"] button[id^="tc_skip"]');
-            if(btn) btn.click();
-        }};
-    }})();
-    </script>
-    """, unsafe_allow_html=True)
-
-    # Hidden control buttons that JS will click
-    _hc1, _hc2, _hc3 = st.columns([1, 1, 1])
-    with _hc1:
-        if st.button("◀", key="tc_prev", help="anterior"):
-            if st.session_state.tour_step > 0:
-                st.session_state.tour_step -= 1
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col1:
+        if st.button("← Anterior", disabled=(step == 0), use_container_width=True, key="td_prev"):
+            st.session_state.tour_step = max(0, step - 1)
             st.rerun()
-    with _hc2:
-        if st.button("▶", key="tc_next", help="siguiente"):
-            if st.session_state.tour_step < total - 1:
-                st.session_state.tour_step += 1
-            else:
-                # Finished
+    with col2:
+        btn_label = "✓ Finalizar tour" if is_last else "Siguiente →"
+        if st.button(btn_label, type="primary", use_container_width=True, key="td_next"):
+            if is_last:
                 st.session_state.tour_activo = False
-                if st.session_state.username:
+                if st.session_state.get("username"):
                     set_tour_completado(st.session_state.username, True)
-            st.rerun()
-    with _hc3:
-        if st.button("✕", key="tc_skip", help="omitir"):
+                st.rerun()
+            else:
+                st.session_state.tour_step = step + 1
+                st.rerun()
+    with col3:
+        if st.button("Omitir tour", use_container_width=True, key="td_skip"):
             st.session_state.tour_activo = False
-            if st.session_state.username:
+            if st.session_state.get("username"):
                 set_tour_completado(st.session_state.username, True)
             st.rerun()
-
-    st.stop()  # Block rest of the page while tour is showing
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -293,7 +255,7 @@ if "mostrar_equipo" not in st.session_state:
 
 # ─── Tour overlay (renders before everything else when active) ────────────────
 if st.session_state.get("tour_activo"):
-    render_tour()
+    tour_dialog()
 
 # ─── Sidebar ──────────────────────────────────────────────────────────────────
 
