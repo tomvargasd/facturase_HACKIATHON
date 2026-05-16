@@ -23,21 +23,33 @@ html, body, [class*="css"] { font-family: 'Inter', 'Segoe UI', sans-serif; }
     color: #c8ddf0 !important; border-left-color: #3b82f6 !important;
 }
 
-/* ── Nav menu items: icon left + label right-aligned ── */
-.navmenu .stButton > button {
+/* ── Nav menu: SVG anchor links ── */
+.nav-item-link {
     display: flex !important;
     align-items: center !important;
-    justify-content: space-between !important;
+    gap: 9px !important;
     padding: 0.58rem 1.4rem !important;
+    text-decoration: none !important;
+    font-size: 0.84rem !important;
+    font-weight: 500 !important;
+    border-left: 3px solid transparent !important;
+    transition: all 0.12s ease !important;
+    color: #5a7d9a !important;
+    cursor: pointer !important;
 }
-.navmenu .stButton > button p {
-    display: flex !important;
-    align-items: center !important;
-    justify-content: space-between !important;
-    width: 100% !important;
-    margin: 0 !important;
+.nav-item-link svg { flex-shrink: 0; }
+.nav-item-link span { flex: 1; }
+.nav-item-link:hover {
+    background: rgba(59,130,246,0.08) !important;
+    color: #c8ddf0 !important;
+    border-left-color: #3b82f6 !important;
+    text-decoration: none !important;
 }
-.navmenu button div { display: flex !important; align-items: center; width: 100%; }
+.nav-item-link.nav-active {
+    background: rgba(59,130,246,0.12) !important;
+    color: #c8ddf0 !important;
+    border-left-color: #3b82f6 !important;
+}
 
 /* ── Metrics ── */
 [data-testid="metric-container"] {
@@ -130,21 +142,21 @@ html, body, [class*="css"] { font-family: 'Inter', 'Segoe UI', sans-serif; }
     background: #1d4ed8 !important;
 }
 
-/* ── Equipo button (standout) ── */
+/* ── Equipo button (standout cyan) ── */
 .equipobtn .stButton > button {
-    background: linear-gradient(90deg, #7c3aed, #a855f7) !important;
+    background: linear-gradient(90deg, #0284c7, #38bdf8) !important;
     color: #ffffff !important;
     border-radius: 8px !important;
     font-weight: 700 !important;
     border: none !important;
     padding: 0.55rem 1.2rem !important;
     letter-spacing: 0.01em !important;
-    box-shadow: 0 2px 8px rgba(124,58,237,0.25) !important;
+    box-shadow: 0 2px 8px rgba(2,132,199,0.28) !important;
     transition: box-shadow 0.15s, background 0.15s !important;
 }
 .equipobtn .stButton > button:hover {
-    background: linear-gradient(90deg, #6d28d9, #9333ea) !important;
-    box-shadow: 0 4px 14px rgba(124,58,237,0.35) !important;
+    background: linear-gradient(90deg, #0369a1, #0ea5e9) !important;
+    box-shadow: 0 4px 14px rgba(2,132,199,0.40) !important;
 }
 
 /* ── Tour button (standout green) ── */

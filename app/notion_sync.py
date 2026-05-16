@@ -86,18 +86,38 @@ def _get_title_prop(nc: "NotionClient", db_id: str) -> str:
 def _ensure_db_props(nc: "NotionClient", db_id: str, props: dict) -> None:
     """
     Call databases.update to add any missing non-title properties.
-    Existing properties are unaffected. Silently ignores failures.
-    This fixes the case where databases.create did not honour custom
-    property definitions (Notion API creates "Name" title by default).
+    Existing properties are unaffected.  Raises on failure so callers
+    can surface the error to the user instead of silently skipping it.
     """
+    existing_db = nc.databases.retrieve(database_id=db_id)
+    existing = set(existing_db.get("properties", {}).keys())
+    missing = {k: v for k, v in props.items() if k not in existing}
+    if missing:
+        nc.databases.update(database_id=db_id, properties=missing)
+
+
+def repair_notion_databases() -> dict:
+    """
+    Explicitly ensure all required columns exist in the three Notion databases.
+    Call this when sync fails due to missing properties on pre-existing databases.
+    Returns {"ok": True} or {"ok": False, "error": str}.
+    """
+    nc = _client()
+    if not nc:
+        return {"ok": False, "error": "Notion no configurado o token inválido."}
+    cfg = get_notion_cfg()
     try:
-        existing_db = nc.databases.retrieve(database_id=db_id)
-        existing = set(existing_db.get("properties", {}).keys())
-        missing = {k: v for k, v in props.items() if k not in existing}
-        if missing:
-            nc.databases.update(database_id=db_id, properties=missing)
-    except Exception:
-        pass
+        for db_key, schema in [
+            ("db_auditorias_id", _AUD_PROPS),
+            ("db_siniestros_id", _SIN_PROPS),
+            ("db_tarifario_id",  _TAR_PROPS),
+        ]:
+            db_id = cfg.get(db_key)
+            if db_id:
+                _ensure_db_props(nc, db_id, schema)
+        return {"ok": True}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
 
 
 # ─── Estado de configuración ──────────────────────────────────────────────────
@@ -243,8 +263,11 @@ def sincronizar_auditoria(
     if not db_id:
         return None
 
-    # Ensure required columns exist (idempotent, cheap when nothing is missing)
-    _ensure_db_props(nc, db_id, _AUD_PROPS)
+    # Ensure required columns exist — raises if Notion API rejects the update
+    try:
+        _ensure_db_props(nc, db_id, _AUD_PROPS)
+    except Exception as exc:
+        raise RuntimeError(f"No se pudieron crear las columnas en Notion: {exc}") from exc
     title_prop = _title_prop or _get_title_prop(nc, db_id)
 
     ts = dictamen.get("timestamp", "")
@@ -331,7 +354,10 @@ def sincronizar_siniestro(
     if not db_id:
         return None
 
-    _ensure_db_props(nc, db_id, _SIN_PROPS)
+    try:
+        _ensure_db_props(nc, db_id, _SIN_PROPS)
+    except Exception as exc:
+        raise RuntimeError(f"No se pudieron crear las columnas en Notion: {exc}") from exc
     title_prop = _title_prop or _get_title_prop(nc, db_id)
 
     page = nc.pages.create(
@@ -392,7 +418,10 @@ def sincronizar_tarifario_items(items: list[dict]) -> dict:
     if not db_id:
         return {"ok": 0, "errores": 0, "error": "BD tarifario no configurada"}
 
-    _ensure_db_props(nc, db_id, _TAR_PROPS)
+    try:
+        _ensure_db_props(nc, db_id, _TAR_PROPS)
+    except Exception as exc:
+        return {"ok": 0, "errores": 0, "error": f"No se pudieron crear las columnas: {exc}"}
     title_prop = _get_title_prop(nc, db_id)
 
     ok = 0
