@@ -33,6 +33,8 @@ from app.database import (
     actualizar_estado_cola,
     eliminar_de_cola,
     limpiar_cola_completados,
+    get_tour_completado,
+    set_tour_completado,
 )
 from app.orquestador import auditar_factura
 from data.demo_data import FACTURAS_DEMO, DEMO_SINIESTRO_MAP
@@ -51,6 +53,153 @@ from app.database import get_notion_url, guardar_notion_url
 
 import dashboard.styles
 from dashboard.login import gen_captcha, login
+
+# ─── Tour steps ───────────────────────────────────────────────────────────────
+
+TOUR_STEPS = [
+    {
+        "title": "Bienvenido a Facturase",
+        "desc": "Este tour rápido te mostrará las principales secciones de la app. Puedes omitirlo y volver a verlo cuando quieras desde el sidebar.",
+        "target": "sidebar",
+    },
+    {
+        "title": "Sidebar de navegación",
+        "desc": "Desde aquí puedes moverte entre todos los módulos: Dashboard, Auditar, Cola, Historial, Siniestros, Tarifario y Notion Sync.",
+        "target": "sidebar",
+    },
+    {
+        "title": "Dashboard — Métricas",
+        "desc": "La pantalla principal muestra tus indicadores clave: total auditado, aprobaciones, rechazos, ahorro detectado y gráficos de distribución.",
+        "target": "main",
+    },
+    {
+        "title": "Acciones rápidas",
+        "desc": "Tres atajos directos para las operaciones más frecuentes: crear una nueva auditoría, agregar a la cola de procesamiento o registrar un nuevo siniestro.",
+        "target": "main",
+    },
+    {
+        "title": "Auditar Factura",
+        "desc": "Sube un PDF de factura o usa una factura demo. Selecciona el expediente del siniestro y ejecuta el análisis con IA en segundos.",
+        "target": "main",
+    },
+    {
+        "title": "Cola de revisión",
+        "desc": "Acumula múltiples casos y procésalos todos de una vez con el botón 'Procesar todos los pendientes'. Ideal para auditorías en lote.",
+        "target": "main",
+    },
+    {
+        "title": "Historial",
+        "desc": "Consulta todas las auditorías pasadas, revisa sus dictámenes detallados y ábrelos directamente en Notion si está configurado.",
+        "target": "main",
+    },
+    {
+        "title": "Siniestros y Tarifario",
+        "desc": "Gestiona los expedientes de siniestros y administra la base de precios de referencia que usa la IA para detectar discrepancias.",
+        "target": "main",
+    },
+    {
+        "title": "Notion Sync",
+        "desc": "Conecta tu cuenta de Notion para sincronizar todos tus datos automáticamente. Los datos en Notion son de solo lectura visual.",
+        "target": "main",
+    },
+    {
+        "title": "¡Todo listo!",
+        "desc": "Ya conoces Facturase. Puedes volver a ver este tour en cualquier momento desde el botón 'Tour de la aplicación' en el sidebar.",
+        "target": "main",
+    },
+]
+
+
+def render_tour() -> None:
+    """Render the interactive tour overlay using HTML/CSS/JS."""
+    step = st.session_state.get("tour_step", 0)
+    total = len(TOUR_STEPS)
+    if step >= total:
+        return
+
+    info = TOUR_STEPS[step]
+    is_last = step == total - 1
+    dots_html = "".join(
+        f'<div class="tc-dot{"  active" if i == step else ""}"></div>'
+        for i in range(total)
+    )
+
+    # Spotlight target coordinates (viewport-relative, best-effort for Streamlit)
+    if info["target"] == "sidebar":
+        spot_style = "left:0;top:0;width:260px;height:100vh;border-radius:0;"
+        card_style = "left:280px;top:50%;transform:translateY(-50%);"
+    else:
+        spot_style = "left:260px;top:56px;right:0;bottom:0;border-radius:0;"
+        card_style = "left:50%;top:50%;transform:translate(-50%,-50%);"
+
+    prev_disabled = "disabled" if step == 0 else ""
+
+    st.markdown(f"""
+    <div id="facturase-tour-overlay" class="active">
+        <div id="facturase-tour-spotlight" style="{spot_style}"></div>
+        <div id="facturase-tour-card" style="{card_style}">
+            <div class="tc-header">
+                <span class="tc-step">Paso {step + 1} de {total}</span>
+                <div class="tc-dots">{dots_html}</div>
+            </div>
+            <div class="tc-title">{info['title']}</div>
+            <div class="tc-desc">{info['desc']}</div>
+            <div class="tc-nav">
+                <button class="tc-btn-prev" id="tc-prev" onclick="window._tcPrev()" {prev_disabled}>← Anterior</button>
+                <button class="tc-btn-next" id="tc-next" onclick="window._tcNext()">
+                    {"Finalizar tour" if is_last else "Siguiente →"}
+                </button>
+                <button class="tc-btn-skip" onclick="window._tcSkip()">Omitir tour</button>
+            </div>
+        </div>
+    </div>
+    <script>
+    (function(){{
+        // Wire buttons to Streamlit hidden button clicks via query param trick
+        function setStep(val) {{
+            window.parent.postMessage({{type:"streamlit:setComponentValue", value: val}}, "*");
+        }}
+        window._tcNext = function() {{
+            var btn = window.parent.document.querySelector('[data-testid="stButton"] button[id^="tc_next"]');
+            if(btn) btn.click();
+        }};
+        window._tcPrev = function() {{
+            var btn = window.parent.document.querySelector('[data-testid="stButton"] button[id^="tc_prev"]');
+            if(btn) btn.click();
+        }};
+        window._tcSkip = function() {{
+            var btn = window.parent.document.querySelector('[data-testid="stButton"] button[id^="tc_skip"]');
+            if(btn) btn.click();
+        }};
+    }})();
+    </script>
+    """, unsafe_allow_html=True)
+
+    # Hidden control buttons that JS will click
+    _hc1, _hc2, _hc3 = st.columns([1, 1, 1])
+    with _hc1:
+        if st.button("◀", key="tc_prev", help="anterior"):
+            if st.session_state.tour_step > 0:
+                st.session_state.tour_step -= 1
+            st.rerun()
+    with _hc2:
+        if st.button("▶", key="tc_next", help="siguiente"):
+            if st.session_state.tour_step < total - 1:
+                st.session_state.tour_step += 1
+            else:
+                # Finished
+                st.session_state.tour_activo = False
+                if st.session_state.username:
+                    set_tour_completado(st.session_state.username, True)
+            st.rerun()
+    with _hc3:
+        if st.button("✕", key="tc_skip", help="omitir"):
+            st.session_state.tour_activo = False
+            if st.session_state.username:
+                set_tour_completado(st.session_state.username, True)
+            st.rerun()
+
+    st.stop()  # Block rest of the page while tour is showing
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -96,13 +245,13 @@ ICON = {
 }
 
 NAV_ITEMS = [
-    ("metricas",   "Dashboard"),
-    ("auditar",    "Auditar Factura"),
-    ("cola",       "Cola de revisión"),
-    ("historial",  "Historial"),
-    ("siniestros", "Siniestros"),
-    ("tarifario",  "Tarifario"),
-    ("notion",     "Notion Sync"),
+    ("metricas",   "Dashboard",         '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>'),
+    ("auditar",    "Auditar Factura",   '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>'),
+    ("cola",       "Cola de revisión",  '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>'),
+    ("historial",  "Historial",         '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>'),
+    ("siniestros", "Siniestros",        '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'),
+    ("tarifario",  "Tarifario",         '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>'),
+    ("notion",     "Notion Sync",       '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M4.459 4.208c.746.606 1.026.56 2.428.466l13.215-.793c.28 0 .047-.28-.046-.326L17.86 1.968c-.42-.326-.981-.7-2.055-.607L3.01 2.295c-.466.046-.56.28-.374.466zm.793 3.08v13.906c0 .747.373 1.027 1.214.98l14.523-.84c.841-.046.935-.56.935-1.167V6.354c0-.606-.233-.933-.748-.887l-15.177.887c-.56.047-.747.327-.747.933zm14.337.745c.093.42 0 .84-.42.888l-.7.14v10.264c-.608.327-1.168.514-1.635.514-.748 0-.935-.234-1.495-.933l-4.577-7.186v6.952L12.21 19s0 .84-1.168.84l-3.222.186c-.093-.186 0-.653.327-.746l.84-.233V9.854L7.822 9.76c-.094-.42.14-1.026.793-1.073l3.456-.233 4.764 7.279v-6.44l-1.215-.139c-.093-.514.28-.887.747-.933z"/></svg>'),
 ]
 
 # ─── Captcha ──────────────────────────────────────────────────────────────────
@@ -114,10 +263,23 @@ if "logged_in" not in st.session_state:
     st.session_state.username = ""
 if "captcha" not in st.session_state:
     st.session_state.captcha = generar_captcha()
+if "tour_activo" not in st.session_state:
+    st.session_state.tour_activo = False
+if "tour_step" not in st.session_state:
+    st.session_state.tour_step = 0
+if "tour_checked" not in st.session_state:
+    st.session_state.tour_checked = False
 
 # ─── Login.  ──────────────────────────────────────────────────────────────────
 
 login(st, verificar_usuario, listar_usuarios_count, LOGO_SVG)
+
+# Auto-trigger tour on first login (check once per session after login)
+if st.session_state.logged_in and not st.session_state.tour_checked:
+    st.session_state.tour_checked = True
+    if not get_tour_completado(st.session_state.username):
+        st.session_state.tour_activo = True
+        st.session_state.tour_step = 0
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN APP
@@ -128,6 +290,10 @@ if "modo_prueba" not in st.session_state:
     st.session_state.modo_prueba = True   # Activo por defecto
 if "mostrar_equipo" not in st.session_state:
     st.session_state.mostrar_equipo = False
+
+# ─── Tour overlay (renders before everything else when active) ────────────────
+if st.session_state.get("tour_activo"):
+    render_tour()
 
 # ─── Sidebar ──────────────────────────────────────────────────────────────────
 
@@ -147,10 +313,19 @@ with st.sidebar:
     st.markdown('<div style="padding:0.6rem 1.4rem 0.2rem 1.4rem;font-size:0.62rem;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:#1e3550">Modulos</div>', unsafe_allow_html=True)
     
     st.markdown('<div class="navmenu">', unsafe_allow_html=True)
-    for key, label in NAV_ITEMS:
-        if st.button(label, key=f"nav_{key}", use_container_width=True):
+    for key, label, icon_svg in NAV_ITEMS:
+        active = st.session_state.pagina == key
+        active_style = "background:rgba(59,130,246,0.12)!important;color:#c8ddf0!important;border-left-color:#3b82f6!important;" if active else ""
+        st.markdown(
+            f'<style>#nav_{key}_wrap .stButton>button{{color:#5a7d9a!important;{active_style}}}</style>'
+            f'<div id="nav_{key}_wrap">',
+            unsafe_allow_html=True,
+        )
+        btn_label = f'{icon_svg}&nbsp;&nbsp;{label}'
+        if st.button(btn_label, key=f"nav_{key}", use_container_width=True):
             st.session_state.pagina = key
             st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown('<hr style="border:none;border-top:1px solid #0f1e30;margin:0.5rem 0">', unsafe_allow_html=True)
@@ -164,7 +339,14 @@ with st.sidebar:
 
     st.markdown('<hr style="border:none;border-top:1px solid #0f1e30;margin:0.5rem 0">', unsafe_allow_html=True)
 
-    st.markdown('<div class="altbuton">', unsafe_allow_html=True)
+    st.markdown('<div class="tourbtn">', unsafe_allow_html=True)
+    if st.button("Tour de la aplicación", key="nav_tour", use_container_width=True):
+        st.session_state.tour_activo = True
+        st.session_state.tour_step = 0
+        st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="equipobtn">', unsafe_allow_html=True)
     if st.button("Acerca del equipo", key="nav_equipo", use_container_width=True):
         st.session_state.mostrar_equipo = True
         st.rerun()
@@ -378,15 +560,15 @@ if pagina == "metricas":
     with qa1:
         st.markdown("""<div class="quick-card">
             <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#1856b4" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
-            <div style="font-weight:600;color:#0f172a;margin-top:0.45rem;font-size:0.88rem">Nueva auditoria</div>
+            <div style="font-weight:600;color:#0f172a;margin-top:0.45rem;font-size:0.88rem">Nueva auditoría</div>
             <div style="font-size:0.75rem;color:#64748b">Analiza una factura individualmente</div>
         </div>""", unsafe_allow_html=True)
 
-        st.markdown('<div class="altbuton">', unsafe_allow_html=True)
+        st.markdown('<div class="qa-btn-nueva">', unsafe_allow_html=True)
         if st.button("Ir a Auditar", key="qa_auditar", use_container_width=True):
             st.session_state.pagina = "auditar"
             st.rerun()
-        st.markdown('<div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
     with qa2:
         st.markdown("""<div class="quick-card">
@@ -395,11 +577,11 @@ if pagina == "metricas":
             <div style="font-size:0.75rem;color:#64748b">Acumula casos para procesar en lote</div>
         </div>""", unsafe_allow_html=True)
 
-        st.markdown('<div class="altbuton">', unsafe_allow_html=True)
+        st.markdown('<div class="qa-btn-cola">', unsafe_allow_html=True)
         if st.button("Ir a Cola", key="qa_cola", use_container_width=True):
             st.session_state.pagina = "cola"
             st.rerun()
-        st.markdown('<div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
     with qa3:
         st.markdown("""<div class="quick-card">
@@ -408,11 +590,11 @@ if pagina == "metricas":
             <div style="font-size:0.75rem;color:#64748b">Registra un expediente nuevo</div>
         </div>""", unsafe_allow_html=True)
 
-        st.markdown('<div class="altbuton">', unsafe_allow_html=True)
+        st.markdown('<div class="qa-btn-siniestro">', unsafe_allow_html=True)
         if st.button("Ir a Siniestros", key="qa_siniestros", use_container_width=True):
             st.session_state.pagina = "siniestros"
             st.rerun()
-        st.markdown('<div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
     st.divider()
     auditorias = listar_auditorias(500)

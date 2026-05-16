@@ -73,6 +73,7 @@ def init_db() -> None:
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
                 username      TEXT UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL,
+                tour_completado INTEGER DEFAULT 0,
                 created_at    TEXT DEFAULT (datetime('now'))
             );
 
@@ -276,6 +277,32 @@ def verificar_usuario(username: str, password: str) -> bool:
 def listar_usuarios_count() -> int:
     with get_db() as conn:
         return conn.execute("SELECT COUNT(*) FROM usuarios").fetchone()[0]
+
+
+def _migrate_tour_column() -> None:
+    """Add tour_completado column to existing DBs that predate it."""
+    with get_db() as conn:
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(usuarios)").fetchall()]
+        if "tour_completado" not in cols:
+            conn.execute("ALTER TABLE usuarios ADD COLUMN tour_completado INTEGER DEFAULT 0")
+
+
+def get_tour_completado(username: str) -> bool:
+    _migrate_tour_column()
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT tour_completado FROM usuarios WHERE username = ?", (username,)
+        ).fetchone()
+    return bool(row["tour_completado"]) if row else False
+
+
+def set_tour_completado(username: str, completado: bool = True) -> None:
+    _migrate_tour_column()
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE usuarios SET tour_completado = ? WHERE username = ?",
+            (int(completado), username),
+        )
 
 
 # ─── Cola de pendientes ───────────────────────────────────────────────────────
